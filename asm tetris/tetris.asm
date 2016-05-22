@@ -12,6 +12,12 @@ video_page dd 0a0000h
 time dw 0
 oldint1c dw ?, ?
 
+keyboard_buffer db 16 dup(?)
+tail dw 0
+head dw 0
+
+oldint9 dw ?, ?
+
 colors db 0, 1fh, 20h, 24h, 28h, 2ch, 30h, 34h ; black, white, blue, magenta, red, yellow, green, cyan
 
 @int1c proc
@@ -28,6 +34,37 @@ colors db 0, 1fh, 20h, 24h, 28h, 2ch, 30h, 34h ; black, white, blue, magenta, re
         iret
 
 @int1c endp
+
+int9 proc
+        push ax bx cx dx di  
+        push cs
+        pop ds
+         
+        in al, 60h
+
+; складывание в буффер
+        mov di, tail
+        mov keyboard_buffer[di], al
+        inc di
+        ;cmp di, head
+        ;je @alert
+        and di, 0fh
+        mov tail, di
+
+; тут сообщаем клаве все
+        in al, 61h
+        push ax
+        or al, 80h
+        out 61h, al
+        pop ax
+        out 61h, al
+
+; тут 
+        mov al, 20h
+        out 20h, al
+        pop di dx cx bx ax
+        iret
+int9 endp
 
 change_video_mode proc
         push ax
@@ -62,6 +99,22 @@ change_time_interrupt proc
         ret
 change_time_interrupt endp
 
+change_keyboard_interrupt proc
+        push ax bx dx es 
+        mov ah, 35h 
+        mov al, 9h
+        int 21h 
+
+        mov oldint9, es
+        mov oldint9+2, bx
+        mov ah, 25h
+        lea dx, int9
+        int 21h
+
+        pop es dx bx ax
+        ret
+change_keyboard_interrupt endp
+
 return_video_mode proc
         push bp
         mov bp, sp
@@ -85,6 +138,20 @@ return_time_interrupt proc
         pop dx ds ax
         ret
 return_time_interrupt endp
+
+return_keyboard_interrupt proc
+        push ax dx
+        mov dx, oldint9+2
+        mov ds, oldint9
+        mov ax, 2509h
+        int 21h
+
+        push cs
+        pop ds
+        pop dx ax
+        ret
+
+return_keyboard_interrupt endp
 
 print_vert_line proc
         ; start, height
@@ -500,64 +567,384 @@ check_for_collision proc
 check_for_collision endp
 
 check_for_border proc
-        ; figure_index, color, 
+        ; figure_index, figure_x, figure_y
+        ; return ax: 0 - has collision, 1 otherwise
         push bp
         mov bp, sp
-        push ax bx cx si di dx
+        push bx cx si di dx
+
+        mov si, [bp + 8] ; figure index
+        shl si, 1
+        mov di, figures[si] ; адрес фигуры
+
+        ; поиск самой левой точки
+
+        mov cx, di
+        add cx, 16 ; конец фигуры
+        xor ax, ax ; column index
+        mov dx, 3 ; leftest point
+        mov si, di
+@@lpl:  
+        cmp [si], byte ptr 0
+        je @@hasnot_figure_l
+
+        cmp dx, ax
+        jle @@hasnot_figure_l
+        mov dx, ax
+
+@@hasnot_figure_l:
+        inc ax
+        inc si
+
+        cmp si, cx
+        je @@check_l
+        cmp ax, 4
+        jne @@lpl
+        xor ax, ax
+        jmp @@lpl
+
+@@check_l:
+        mov ax, [bp + 6]
+        add ax, dx
+        cmp ax, 0
+        jge @@next_l
+
+        xor ax, ax
+        jmp @@exit
+
+@@next_l:
+
+        ;поиск самой правой точки
+        
+        mov cx, di
+        add cx, 16 ; конец фигуры
+        xor ax, ax ; column index
+        mov dx, 0 ; rightest point
+        mov si, di
+@@lpr:  
+        cmp [si], byte ptr 0
+        je @@hasnot_figure_r
+
+        cmp dx, ax
+        jge @@hasnot_figure_r
+        mov dx, ax
+
+@@hasnot_figure_r:
+        inc ax
+        inc si
+
+        cmp si, cx
+        je @@check_r
+        cmp ax, 4
+        jne @@lpr
+        xor ax, ax
+        jmp @@lpr
+
+@@check_r:
+        mov ax, [bp + 6]
+        add ax, dx
+        cmp ax, 10
+        jl @@next_r
+
+        xor ax, ax
+        jmp @@exit
+
+@@next_r:
+
+        ; поиск самой нижней точки
+
+        mov cx, di
+        add cx, 16 ; конец фигуры
+        xor ax, ax ; column index
+        xor bx, bx ; row index
+        mov dx, 0 ; downest point
+        mov si, di
+@@lpd:  
+        cmp [si], byte ptr 0
+        je @@hasnot_figure_d
+
+        mov dx, bx
+
+@@hasnot_figure_d:
+        inc ax
+        inc si
+
+        cmp si, cx
+        je @@check_d
+        cmp ax, 4
+        jne @@lpd
+        inc bx
+        xor ax, ax
+        jmp @@lpd
+
+@@check_d:
+        mov ax, [bp + 4]
+        add ax, dx
+        cmp ax, 20
+        jl @@next_d
+
+        xor ax, ax
+        jmp @@exit
+
+@@next_d:
+        mov ax, 1
 
 @@exit:
-        pop dx di si cx bx ax bp
-        ret 4
+        pop dx di si cx bx bp
+        ret 6
 check_for_border endp
 
-figure_down proc
-        ; figure_index, color, 
+rotate_figure proc
+        ; figure_index
         push bp
         mov bp, sp
-        push ax bx cx si di dx
+        push ax bx cx dx
 
 @@exit:
-        pop dx di si cx bx ax bp
-        ret 4
+
+        pop dx cx bx ax bp
+        ret 2
+rotate_figure endp
+
+try_to_move proc
+        ; figure_index, figure_x, figure_y, shist_x, shift_y, color 
+        ; return ax: 0 - cant move, 1 - move
+        push bp
+        mov bp, sp
+        push bx cx dx
+
+        mov ax, [bp + 14]
+        mov bx, [bp + 12]
+        mov cx, [bp + 10]
+        mov dx, [bp + 4]
+        push ax bx cx
+        call clean_figure
+
+        add bx, [bp + 8]
+        add cx, [bp + 6]
+
+        push ax bx cx
+        call check_for_border
+        cmp ax, 0
+        je @@bad_end
+
+        push ax bx cx
+        call check_for_collision
+        cmp ax, 0
+        je @@bad_end
+
+        push ax bx cx dx
+        call put_figure
+        mov ax, 1
+        jmp @@exit
+
+@@bad_end:
+        mov ax, [bp + 14]
+        mov bx, [bp + 12]
+        mov cx, [bp + 10]
+        mov dx, [bp + 4]
+        push ax bx cx dx
+        call put_figure
+        xor ax, ax
+@@exit:
+
+        pop dx cx bx bp
+        ret 12
+try_to_move endp
+
+process_key proc
+        ; scancode
+        ; return ax: 0 - exit, 1 - continue
+        push bp
+        mov bp, sp
+        push bx cx si di dx
+
+        mov si, [bp + 4]
+        cmp si, 48h ; up
+        jne @@next1
+        mov bx, current_figure_index
+        push bx
+        call rotate_figure
+
+@@next1:
+        cmp si, 4bh ; left
+        jne @@next2
+
+        mov bx, current_figure_index
+        mov cx, current_figure_position_x
+        mov dx, current_figure_position_y
+        push bx cx dx
+        mov bx, -1
+        mov cx, 0
+        mov dx, current_figure_color
+        push bx cx dx
+        call try_to_move
+
+        cmp ax, 1
+        jne @@next2
+        mov cx, current_figure_position_x
+        dec cx
+        mov current_figure_position_x, cx
+
+@@next2:
+        cmp si, 4dh ; right
+        jne @@next3
+
+        mov bx, current_figure_index
+        mov cx, current_figure_position_x
+        mov dx, current_figure_position_y
+        push bx cx dx
+        mov bx, 1
+        mov cx, 0
+        mov dx, current_figure_color
+        push bx cx dx
+        call try_to_move
+
+        cmp ax, 1
+        jne @@next3
+        mov cx, current_figure_position_x
+        inc cx
+        mov current_figure_position_x, cx
+
+@@next3:
+        cmp si, 50h ; down
+        jne @@next4
+
+        mov bx, current_figure_index
+        mov cx, current_figure_position_x
+        mov dx, current_figure_position_y
+        push bx cx dx
+        mov bx, 0
+        mov cx, 1
+        mov dx, current_figure_color
+        push bx cx dx
+        call try_to_move
+
+        cmp ax, 1
+        jne @@next4
+        mov cx, current_figure_position_y
+        inc cx
+        mov current_figure_position_y, cx
+
+@@next4:
+        cmp si, 01h ; exit
+        jne @@continue_exit
+        xor ax, ax
+        jmp @@exit
+
+@@continue_exit:
+        mov ax, 1
+@@exit:
+        call print_map
+        call print_wrapper
+        pop dx di si cx bx bp
+        ret 2
+process_key endp
+
+check_for_key proc
+        ;return ax: 0 - exit, 1 - continue
+        push si di dx
+
+        mov ax, 1
+        mov si, head
+        cmp si, tail
+        je @@exit
+
+        cli 
+        xor dx, dx
+        mov dl, keyboard_buffer[si]
+        inc si
+        and si, 0fh
+        mov head, si
+        sti
+
+        push dx
+        call process_key
+
+@@exit:
+        pop dx di si
+        ret
+check_for_key endp
+
+figure_down proc
+        ; figure_index, figure_x, figure_y, color 
+        push bp
+        mov bp, sp
+        push bx cx dx
+
+        mov ax, [bp + 10]
+        mov bx, [bp + 8]
+        mov cx, [bp + 6]
+        mov dx, [bp + 4]
+
+        push ax bx cx
+        mov ax, 0
+        mov bx, 1
+        push ax bx dx
+        call try_to_move
+
+@@exit:
+        pop dx cx bx bp
+        ret 8
 figure_down endp
 
 @start:
         call change_video_mode
         call change_time_interrupt
+        call change_keyboard_interrupt
         mov ax, 1
         mov bx, 5
-        mov cx, 17     
+        mov cx, 10     
         mov dx, 2
+        mov current_figure_index, ax
+        mov current_figure_position_x, bx
+        mov current_figure_position_y, cx
+        mov current_figure_color, dx
+
         push ax bx cx dx
         call put_figure
 
         call print_map
         call print_wrapper
 
-        mov ax, 1
-        mov bx, 5
-        mov cx, 16    
-        mov dx, 3
-        push ax bx cx
-        call check_for_collision
+@@lp:
+        call check_for_key
         cmp ax, 0
-        je @@a
+        je @@exit
+
+        mov si, 10
+        cmp time, si
+        jl @@lp
+
+        mov time, byte ptr 0
+
+        mov ax, current_figure_index
+        mov bx, current_figure_position_x
+        mov cx, current_figure_position_y
+        mov dx, current_figure_color
         push ax bx cx dx
-        call put_figure
+        call figure_down
 
         call print_map
         call print_wrapper
-@@a:
-        ; push ax bx cx
-        ; call clean_figure
-        ; call print_map
-        ; call print_wrapper      
 
-        mov ah,0
-        int 16h
+        mov cx, current_figure_position_y
+        inc cx
+        mov current_figure_position_y, cx
+
+        cmp ax, 0
+        jne @@lp
+
+@@exit:
+        call return_keyboard_interrupt
         call return_time_interrupt
         call return_video_mode
         ret
+
+current_figure_index dw 0
+current_figure_position_x dw 0
+current_figure_position_y dw 0
+current_figure_color dw 0
 
 figures dw figure_I, figure_J, figure_L, figure_O, figure_S, figure_T, figure_Z
 
