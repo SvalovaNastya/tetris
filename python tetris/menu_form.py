@@ -12,15 +12,12 @@ class MenuForm:
 		self.form_height = 200
 		self.root.geometry(str(self.form_width) + 'x' + str(self.form_height))
 		self.canvas = Canvas(self.root,
-							 width=self.form_width, 
+							 width=self.form_width,
 							 height=self.form_height)
 		self.canvas.place(x=0, y=0)
 		self.set_widgets()
 
 	def set_widgets(self):
-		# self.draw_button = Button(self.root, text='Draw', command=self.draw_button_function, height=1, width=10)
-		# self.draw_button.place(x=80, y=400)
-
 		self.start_game_button = Button(self.root, text='Start game', command=self.start_game_function, height=1, width=10)
 		self.start_game_button.place(x=25, y=50)
 
