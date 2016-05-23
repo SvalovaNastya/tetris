@@ -783,11 +783,13 @@ try_to_move proc
         cmp ax, 0
         je @@bad_end
 
+        mov ax, [bp + 14]
         push ax bx cx
         call check_for_collision
         cmp ax, 0
         je @@bad_end
 
+        mov ax, [bp + 14]
         push ax bx cx dx
         call put_figure
         mov ax, 1
@@ -830,11 +832,13 @@ try_to_rotate proc
         cmp ax, 0
         je @@bad_end
 
+        mov ax, [bp + 10]
         push ax bx cx
         call check_for_collision
         cmp ax, 0
         je @@bad_end
 
+        mov ax, [bp + 10]
         push ax bx cx dx
         call put_figure
         mov ax, 1
@@ -1008,16 +1012,6 @@ main_loop proc
 @@lp:
         call check_for_key
 
-        ;упоротая отладка
-        ; push ax bx cx dx
-
-        ; mov ax, 110
-        ; mov bx, 1
-        ; push ax cx bx
-        ; call print_cell 
-
-        ; pop dx cx bx ax
-
         cmp ax, 0
         je @@exit
 
@@ -1031,6 +1025,7 @@ main_loop proc
         mov bx, current_figure_position_x
         mov cx, current_figure_position_y
         mov dx, current_figure_color
+
         push ax bx cx dx
         call figure_down
 
@@ -1052,9 +1047,10 @@ main_loop endp
         call change_video_mode
         call change_time_interrupt
         call change_keyboard_interrupt
-        mov ax, 1
-        mov bx, 5
-        mov cx, 10     
+
+        mov ax, 0
+        mov bx, 3
+        mov cx, 0
         mov dx, 2
         mov current_figure_index, ax
         mov current_figure_position_x, bx
@@ -1066,7 +1062,6 @@ main_loop endp
 
         call print_map
         call print_wrapper
-
 
         call main_loop
 
