@@ -1006,6 +1006,90 @@ figure_down proc
         ret 8
 figure_down endp
 
+clean_line proc
+        ; row_map_index
+        push bp
+        mov bp, sp
+        push ax cx dx si
+
+        mov ax, [bp + 4]
+        mov cx, 10
+        mul cx
+        dec ax
+        mov si, ax
+
+@@lp:
+        mov di, si
+        add di, 10
+        mov al, map[si]
+        mov map[di], al
+        dec si
+
+        cmp si, 0
+        jne @@lp
+
+@@exit:
+        pop si dx cx ax bp
+        ret 2
+clean_line endp
+
+check_full_line proc
+        push ax bx cx dx si di
+
+        xor si, si
+        xor bx, bx ; column count
+        xor dx, dx ; rows count
+        xor ax, ax ; показатель, что строка заполнена не нулями. 
+        ; если 0 - нужно удалять, если 1 - есть пустые клетки
+@@lp:
+        cmp map[si], 0
+        jne @@continue_lp
+
+        mov ax, 1
+
+@@continue_lp:
+
+        inc bx
+        inc si
+
+        cmp bx, 10
+        jne @@lp
+
+        cmp ax, 0
+        jne @@not_clean
+
+        push dx
+        call clean_line
+
+@@not_clean:
+        inc dx
+        xor ax, ax
+        xor bx, bx
+        cmp si, 200
+        jne @@lp
+
+@@exit:
+        pop di si dx cx bx ax
+        ret 
+check_full_line endp
+
+get_next_figure proc
+        push ax bx cx dx si di
+        
+        mov ax, 5
+        mov bx, 3
+        mov cx, 0
+        mov dx, 2
+        mov current_figure_index, ax
+        mov current_figure_position_x, bx
+        mov current_figure_position_y, cx
+        mov current_figure_color, dx
+
+@@exit:
+        pop di si dx cx bx ax
+        ret 
+get_next_figure endp
+
 main_loop proc
         push ax bx cx dx si di
 
@@ -1037,6 +1121,11 @@ main_loop proc
         mov current_figure_position_y, cx
         cmp ax, 0
         jne @@lp
+
+        call check_full_line
+        call get_next_figure
+        jmp @@lp
+
 @@exit:
         pop di si dx cx bx ax
         ret
@@ -1048,7 +1137,7 @@ main_loop endp
         call change_time_interrupt
         call change_keyboard_interrupt
 
-        mov ax, 0
+        mov ax, 5
         mov bx, 3
         mov cx, 0
         mov dx, 2
