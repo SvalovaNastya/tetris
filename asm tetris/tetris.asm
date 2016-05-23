@@ -21,6 +21,7 @@ oldint9 dw ?, ?
 colors db 0, 1fh, 20h, 24h, 28h, 2ch, 30h, 34h ; black, white, blue, magenta, red, yellow, green, cyan
 
 @int1c proc
+        push ax ds 
         push ds
         push cs
         pop ds
@@ -31,6 +32,7 @@ colors db 0, 1fh, 20h, 24h, 28h, 2ch, 30h, 34h ; black, white, blue, magenta, re
         pop ds
         mov al, 20h
         out 20h, al
+        pop ds ax
         iret
 
 @int1c endp
@@ -698,12 +700,65 @@ rotate_figure proc
         ; figure_index
         push bp
         mov bp, sp
-        push ax bx cx dx
+        push ax bx cx dx si di
+
+        mov si, [bp + 4] ; figure index
+        shl si, 1
+        mov di, figures[si] ; адрес фигуры
+
+        xor bx, bx ; row index 
+        xor cx, cx ; column index
+
+@@lp:
+        cmp [di], byte ptr 0
+        je @@end_lp
+
+        mov ax, bx
+        mov dx, 4
+        mul dx
+
+        mov dx, cx
+        neg dx
+        add dx, 3
+        add ax, dx
+        mov si, ax
+        mov temp_figure[si], 1
+@@end_lp:
+        inc di
+        inc bx
+        cmp bx, 4
+        jne @@lp
+        xor bx, bx
+        inc cx
+        cmp cx, 4
+        jne @@lp
 
 @@exit:
+        mov si, [bp + 4] ; figure index
+        shl si, 1
+        mov di, figures[si] ; адрес фигуры
+        lea si, temp_figure
+        mov cx, 15
+        rep movsb
 
-        pop dx cx bx ax bp
+        mov ax, 0
+        lea si, temp_figure
+        xor cx, cx
+
+@@clean:
+        mov [si], ax
+        inc si
+        inc cx
+        cmp cx, 15
+        jne @@clean
+
+        pop di si dx cx bx ax bp
         ret 2
+
+temp_figure     db 0,0,0,0
+                db 0,0,0,0
+                db 0,0,0,0
+                db 0,0,0,0
 rotate_figure endp
 
 try_to_move proc
@@ -752,6 +807,59 @@ try_to_move proc
         ret 12
 try_to_move endp
 
+
+try_to_rotate proc
+        ; figure_index, figure_x, figure_y, color 
+        ; return ax: 0 - cant move, 1 - move
+        push bp
+        mov bp, sp
+        push ax bx cx dx
+
+        mov ax, [bp + 10]
+        mov bx, [bp + 8]
+        mov cx, [bp + 6]
+        mov dx, [bp + 4]
+        push ax bx cx
+        call clean_figure
+
+        push ax
+        call rotate_figure  
+
+        push ax bx cx
+        call check_for_border
+        cmp ax, 0
+        je @@bad_end
+
+        push ax bx cx
+        call check_for_collision
+        cmp ax, 0
+        je @@bad_end
+
+        push ax bx cx dx
+        call put_figure
+        mov ax, 1
+        jmp @@exit
+
+@@bad_end:
+        mov ax, [bp + 10]
+        push ax ax ax
+        call rotate_figure
+        call rotate_figure
+        call rotate_figure
+        mov ax, [bp + 10]
+        mov bx, [bp + 8]
+        mov cx, [bp + 6]
+        mov dx, [bp + 4]
+        push ax bx cx dx
+        call put_figure
+        xor ax, ax
+@@exit:
+
+        pop dx cx bx ax bp
+        ret 8
+
+try_to_rotate endp
+
 process_key proc
         ; scancode
         ; return ax: 0 - exit, 1 - continue
@@ -762,9 +870,14 @@ process_key proc
         mov si, [bp + 4]
         cmp si, 48h ; up
         jne @@next1
+
         mov bx, current_figure_index
+        mov cx, current_figure_position_x
+        mov dx, current_figure_position_y
+        push bx cx dx
+        mov bx, current_figure_color
         push bx
-        call rotate_figure
+        call try_to_rotate
 
 @@next1:
         cmp si, 4bh ; left
@@ -868,6 +981,7 @@ check_for_key endp
 
 figure_down proc
         ; figure_index, figure_x, figure_y, color 
+        ; return ax: 0 - exit, 1 - continue
         push bp
         mov bp, sp
         push bx cx dx
@@ -888,27 +1002,22 @@ figure_down proc
         ret 8
 figure_down endp
 
-@start:
-        call change_video_mode
-        call change_time_interrupt
-        call change_keyboard_interrupt
-        mov ax, 1
-        mov bx, 5
-        mov cx, 10     
-        mov dx, 2
-        mov current_figure_index, ax
-        mov current_figure_position_x, bx
-        mov current_figure_position_y, cx
-        mov current_figure_color, dx
-
-        push ax bx cx dx
-        call put_figure
-
-        call print_map
-        call print_wrapper
+main_loop proc
+        push ax bx cx dx si di
 
 @@lp:
         call check_for_key
+
+        ;упоротая отладка
+        ; push ax bx cx dx
+
+        ; mov ax, 110
+        ; mov bx, 1
+        ; push ax cx bx
+        ; call print_cell 
+
+        ; pop dx cx bx ax
+
         cmp ax, 0
         je @@exit
 
@@ -931,11 +1040,39 @@ figure_down endp
         mov cx, current_figure_position_y
         inc cx
         mov current_figure_position_y, cx
-
         cmp ax, 0
         jne @@lp
+@@exit:
+        pop di si dx cx bx ax
+        ret
+
+main_loop endp
+
+@start:
+        call change_video_mode
+        call change_time_interrupt
+        call change_keyboard_interrupt
+        mov ax, 1
+        mov bx, 5
+        mov cx, 10     
+        mov dx, 2
+        mov current_figure_index, ax
+        mov current_figure_position_x, bx
+        mov current_figure_position_y, cx
+        mov current_figure_color, dx
+
+        push ax bx cx dx
+        call put_figure
+
+        call print_map
+        call print_wrapper
+
+
+        call main_loop
 
 @@exit:
+        ; mov ah,0
+        ; int 16h
         call return_keyboard_interrupt
         call return_time_interrupt
         call return_video_mode
