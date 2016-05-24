@@ -298,6 +298,79 @@ print_map proc
         ret
 print_map endp
 
+;; random!!
+; rand    proc       near
+;         push       dx
+;         mov        ax, word ptr seed  ; считать последнее
+;                                        ; случайное число
+;         test       ax,ax             ; проверить его, если это -1,
+;         js         fetch_seed          ; функция еще ни разу не
+;                                        ; вызывалась и надо создать
+;                                        ; начальное значение
+; randomize:
+;         mul        word ptr rand_a    ; умножить на число а,
+;         div        word ptr rand_m    ; взять остаток от
+;                                        ; деления на 231-1
+;         mov        ax,dx
+;         mov        word ptr seed,ax  ; сохранить для
+;                                        ; следующих вызовов
+;         pop        dx
+;         ret
+
+; fetch_seed:
+;         push       ds
+;         push       0040h
+;         pop        ds
+;         mov        ax, word ptr ds:006Ch ; считать
+;                                           ; двойное слово из области
+;         pop        ds                     ; данных BIOS по адресу
+;                                           ; 0040:0060 - текущее число
+;         jmp        randomize        ; тактов таймера
+
+; rand_a  dw         400 014 
+; rand_m  dw         2 147 483 563
+; seed    dw         -1
+; rand    endp
+
+rand   proc
+        push bx cx
+        mov        ax, word ptr seed
+
+        test       ax,ax             ; проверить его, если это -1,
+        js         fetch_seed          
+
+randomize:
+        mov        cx,8
+newbit: mov        bx,ax
+        and        bx,002Dh
+        xor        bh,bl
+        clc
+        jpe        shift
+        stc
+shift:  rcr        ax,1
+        loop       newbit
+        mov        word ptr seed,ax
+        mov        ah,0
+        pop cx bx
+        ret
+
+fetch_seed:
+        push       ds
+        push       0040h
+        pop        ds
+        mov        ax,word ptr ds:0060h ; считать
+                                          ; двойное слово из области
+        pop        ds                     ; данных BIOS по адресу
+                                          ; 0040:0060 - текущее число
+        jmp        randomize        ; тактов таймера
+
+seed    dw         -1
+
+rand   endp
+
+
+;; end random
+
 put_figure proc
         ; figure_index, figure_position_x, figure_position_y, color
         push bp
@@ -1073,13 +1146,63 @@ check_full_line proc
         ret 
 check_full_line endp
 
+rand_time dw 0
+
 get_next_figure proc
         push ax bx cx dx si di
+
+        ; call rand
+        ; mov bx, 7
+        ; div bx
+
+        ; mov cx, dx ; запомнили пока индекс фигуры сюда
+
+        ; call rand
+        ; mov bx, 7
+        ; div bx ; в dx цвет
+        ; inc dx
+
+        ; mov ax, cx 
+
+; пыталась сама :(
+        mov ah, 2ch
+        int 21h
+
+        xor ax, ax
+        mov al, dl ; взяли миллисекунды системного времени
+
+        mov dx, rand_time
+        add dx, ax
+        mov rand_time, dx
+        mov ax, dx
+
+        mov bl, 7
+        div bl
+
+        mov al, ah
+        mov ah, 0
+        push ax ; запомнили пока индекс фигуры сюда
+
+        mov ah, 2ch
+        int 21h
+
+        xor ax, ax
+        mov al, dl ; взяли милли секунды системного времени
+        add al, dh
+        mov bl, 7
+        div bl
+
+        xor dx, dx
+        mov dl, ah
+        inc dx
+
+        pop ax
+;;;;;
         
-        mov ax, 5
+        ; mov ax, 5
         mov bx, 3
-        mov cx, 0
-        mov dx, 2
+        mov cx, -1
+        ; mov dx, 2
         mov current_figure_index, ax
         mov current_figure_position_x, bx
         mov current_figure_position_y, cx
@@ -1089,6 +1212,41 @@ get_next_figure proc
         pop di si dx cx bx ax
         ret 
 get_next_figure endp
+
+check_end_game proc
+        ; return ax: 0 - exit, 1 - continue
+
+        push bx cx si
+
+        ; mov ax, 1 ; ; показатель, что строка заполнена нулями. 
+        ; если 0 - есть заполненные клетки, если 1 - все нули 
+
+        mov ax, current_figure_index
+        mov bx, current_figure_position_x
+        mov cx, current_figure_position_y
+
+        push ax bx cx
+        call check_for_collision
+
+        xor si, si ; map index
+        xor cx, cx ; column index
+
+@lp:
+        cmp map[si], 0
+        je @continue_lp
+
+        xor ax, ax
+
+@continue_lp:
+        inc si
+        inc cx
+        cmp cx, 10
+        jne @lp
+
+@@exit:
+        pop si cx bx
+        ret 
+check_end_game endp
 
 main_loop proc
         push ax bx cx dx si di
@@ -1124,6 +1282,9 @@ main_loop proc
 
         call check_full_line
         call get_next_figure
+        call check_end_game
+        cmp ax, 0
+        je @@exit
         jmp @@lp
 
 @@exit:
@@ -1139,7 +1300,7 @@ main_loop endp
 
         mov ax, 5
         mov bx, 3
-        mov cx, 0
+        mov cx, -1
         mov dx, 2
         mov current_figure_index, ax
         mov current_figure_position_x, bx
