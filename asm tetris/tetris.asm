@@ -155,18 +155,53 @@ return_keyboard_interrupt proc
 
 return_keyboard_interrupt endp
 
+print_scores proc
+        push ax bx cx dx
+
+        xor cx, cx
+        mov bx, 10
+        mov ax, scores
+
+        cmp ax, 0
+        jne @@lp
+
+        mov dx, '0'
+        mov ah, 02h
+        int 21h
+        jmp @@exit
+
+@@lp:
+        xor dx, dx
+        div bx
+        add dl, '0'
+        push dx
+        inc cx
+        test ax, ax
+        jnz @@lp
+
+@@print:
+        pop dx
+        mov ah, 02h
+        int 21h
+        loop @@print
+
+@@exit:
+        pop dx cx bx ax
+        ret
+print_scores endp
+
 print_vert_line proc
-        ; start, height
+        ; start, height, color
         push bp
         mov bp, sp
         push ax cx di es
 
         mov ax,0A000h
         mov es,ax
-        mov ax, 68h
+        mov ax, [bp + 4] ;68h
 
-        mov di, [bp + 6]
-        mov cx, [bp + 4]
+        mov di, [bp + 8]
+        mov cx, [bp + 6]
 @line:
         stosb
         add di, 319
@@ -175,62 +210,170 @@ print_vert_line proc
         jne @line
 
         pop es di cx ax bp
-        ret 4
+        ret 6
 print_vert_line endp
 
 print_horizont_line proc
-        ; start, height
+        ; start, height, color
         push bp
         mov bp, sp
         push ax cx di es
 
         mov ax,0A000h
         mov es,ax
-        mov ax, 68h
+        mov ax, [bp + 4] ;68h
 
-        mov di, [bp + 6]
-        mov cx, [bp + 4]
+        mov di, [bp + 8]
+        mov cx, [bp + 6]
         
         rep stosb
 
         pop es di cx ax bp
-        ret 4
+        ret 6
 print_horizont_line endp
+
+print_next_figure proc
+        push ax bx cx dx si di
+
+        mov ax, figure_start_x ; x
+        mov bx, figure_start_y ; y
+
+        xor cx, cx ; column index
+        xor dx, dx ; row index
+
+        xor si, si ; color
+
+@@clean_lp:
+        push ax bx si
+        call print_cell
+
+        inc cx
+        add ax, cell_size
+
+        cmp cx, 4
+        jne @@clean_lp
+
+        xor cx, cx
+        inc dx
+        mov ax, figure_start_x
+        add bx, cell_size
+
+        cmp dx, 4
+        jne @@clean_lp
+
+; color_figure
+        mov ax, figure_start_x ; x
+        mov bx, figure_start_y ; y
+
+        mov si, next_figure_index ; figure index
+        shl si, 1
+        mov di, figures[si] ; адрес фигуры
+
+        mov cl, map[di]
+        mov si, cx
+        mov cl, colors[si]
+
+        xor cx, cx
+        mov cx, next_figure_color ; color
+        mov si, cx
+        mov cl, colors[si]
+        mov si, cx
+
+        xor cx, cx ; column index
+        xor dx, dx ; row index
+
+@@lp:
+        cmp [di], byte ptr 0
+        je @@continue_lp
+        push ax bx si
+        call print_cell
+
+@@continue_lp:
+        inc cx
+        inc di
+        add ax, cell_size
+
+        cmp cx, 4
+        jne @@lp
+
+        xor cx, cx
+        inc dx
+        mov ax, figure_start_x
+        add bx, cell_size
+
+        cmp dx, 4
+        jne @@lp
+
+        pop di si dx cx bx ax
+        ret
+
+figure_start_x dw 104
+figure_start_y dw 58
+print_next_figure endp
 
 print_wrapper proc
         push bp
         mov bp, sp
-        push ax cx di es
+        push ax bx cx dx di es
 
+        mov dx, 68h
 ; left line
         mov di, 2566 ; 320 * 8 + 6
         mov cx, 162 ; 20*8+2
-        push di cx
+        push di cx dx
         call print_vert_line
 
         inc di
-        push di cx
+        push di cx dx
         call print_vert_line
 
         add di, 82 ; 10 * 8 + 1
-        push di cx
+        push di cx dx
         call print_vert_line
 
         inc di
-        push di cx
+        push di cx dx
         call print_vert_line
 
         mov di, 53768 ; 320 * 168 + 8
         mov cx, 81 ; 10*8
-        push di cx
+        push di cx dx
         call print_horizont_line
 
         add di, 320
-        push di cx
+        push di cx dx
         call print_horizont_line
 
-        pop es di cx ax bp
+        mov ah, 02h
+        xor bx, bx
+        mov dx, 010dh
+        int 10h
+
+        lea dx, scores_line
+        mov ah, 09h
+        int 21h
+
+        mov ah, 02h
+        xor bx, bx
+        mov dx, 030dh
+        int 10h
+
+        call print_scores
+
+        mov ah, 02h
+        xor bx, bx
+        mov dx, 050dh
+        int 10h
+
+        lea dx, next_figure_line
+        mov ah, 09h
+        int 21h
+
+        pop es di dx cx bx ax bp
         ret
+
+scores_line db "Scores:", 0dh, 0ah, '$'
+next_figure_line db "Next figure:", 0dh, 0ah, '$'
 print_wrapper endp
 
 print_cell proc
@@ -1017,6 +1160,29 @@ process_key proc
         mov current_figure_position_y, cx
 
 @@next4:
+        cmp si, 39h ; down
+        jne @@next5
+
+@@4lp:
+        mov bx, current_figure_index
+        mov cx, current_figure_position_x
+        mov dx, current_figure_position_y
+        push bx cx dx
+        mov bx, 0
+        mov cx, 1
+        mov dx, current_figure_color
+        push bx cx dx
+        call try_to_move
+
+        cmp ax, 1
+        jne @@next5
+        mov cx, current_figure_position_y
+        inc cx
+        mov current_figure_position_y, cx
+
+        jmp @@4lp
+
+@@next5:
         cmp si, 01h ; exit
         jne @@continue_exit
         xor ax, ax
@@ -1102,6 +1268,10 @@ clean_line proc
         jne @@lp
 
 @@exit:
+        mov ax, scores
+        add ax, 100
+        mov scores, ax
+
         pop si dx cx ax bp
         ret 2
 clean_line endp
@@ -1146,7 +1316,7 @@ check_full_line proc
         ret 
 check_full_line endp
 
-rand_time dw 0
+; rand_time dw 0
 
 get_next_figure proc
         push ax bx cx dx si di
@@ -1171,10 +1341,8 @@ get_next_figure proc
         xor ax, ax
         mov al, dl ; взяли миллисекунды системного времени
 
-        mov dx, rand_time
-        add dx, ax
-        mov rand_time, dx
-        mov ax, dx
+        mov dx, time
+        add ax, dx
 
         mov bl, 7
         div bl
@@ -1199,14 +1367,21 @@ get_next_figure proc
         pop ax
 ;;;;;
         
+        mov bx, next_figure_index
+        mov current_figure_index, bx
+        mov bx, next_figure_color
+        mov current_figure_color, bx
+        
         ; mov ax, 5
         mov bx, 3
         mov cx, -1
         ; mov dx, 2
-        mov current_figure_index, ax
+        mov next_figure_index, ax
         mov current_figure_position_x, bx
         mov current_figure_position_y, cx
-        mov current_figure_color, dx
+        mov next_figure_color, dx
+
+        call print_next_figure
 
 @@exit:
         pop di si dx cx bx ax
@@ -1293,19 +1468,35 @@ main_loop proc
 
 main_loop endp
 
-@start:
-        call change_video_mode
-        call change_time_interrupt
-        call change_keyboard_interrupt
+clean_map proc
+        push ax cx di
+
+        lea di, map
+        mov cx, 200
+        xor ax, ax
+        rep stosb
+
+        pop di cx ax
+        ret
+clean_map endp
+
+start_new_game proc
+        push ax bx cx dx
+
+        mov scores, word ptr 0
+
+        call clean_map
 
         mov ax, 5
         mov bx, 3
         mov cx, -1
         mov dx, 2
-        mov current_figure_index, ax
+        mov next_figure_index, ax
         mov current_figure_position_x, bx
         mov current_figure_position_y, cx
-        mov current_figure_color, dx
+        mov next_figure_color, dx
+
+        call get_next_figure    
 
         push ax bx cx dx
         call put_figure
@@ -1314,10 +1505,272 @@ main_loop endp
         call print_wrapper
 
         call main_loop
+        call cls
+
+        call game_over_screen
+        pop dx cx bx ax
+        ret
+start_new_game endp
+
+game_over_screen proc
+        push ax bx cx dx si di
+
+        mov ah, 02h
+        xor bx, bx
+        mov dx, 0308h
+        add dh, cl
+        int 10h
+
+        lea dx, game_over_str
+        mov ah, 09h
+        int 21h
+
+        mov ah, 02h
+        xor bx, bx
+        mov dx, 0508h
+        add dh, cl
+        int 10h
+
+        lea dx, res_score_str
+        mov ah, 09h
+        int 21h
+
+        mov ah, 02h
+        xor bx, bx
+        mov dx, 0708h
+        add dh, cl
+        int 10h
+
+        call print_scores
+
+        mov ah, 02h
+        xor bx, bx
+        mov dx, 0908h
+        add dh, cl
+        int 10h
+
+        lea dx, key_str
+        mov ah, 09h
+        int 21h
+
+@@lp:
+        hlt
+        mov ax, 1
+        mov si, head
+        cmp si, tail
+        je @@lp
+
+        cli 
+        xor dx, dx
+        mov dl, keyboard_buffer[si]
+        inc si
+        and si, 0fh
+        mov head, si
+        sti
+
+        cmp dx, 1ch ; enter
+        jne @@lp
+
+        pop di si dx cx bx ax
+        ret
+
+game_over_str db "Game over", 0dh, 0ah, '$'
+res_score_str db "Your scores:", 0dh, 0ah, '$'
+key_str db "Press enter to continue", 0dh, 0ah, '$'
+game_over_screen endp
+
+print_selected_item proc
+        ; selected item, color
+        push bp
+        mov bp, sp
+        push ax bx cx dx si di
+
+        mov si, [bp + 4]
+        mov ax, 25
+        mov bx, [bp + 6]
+        mul bx
+
+        mov bx, 320
+        mul bx
+        add ax, 5530
+        mov cx, 20
+        push ax cx si
+        call print_vert_line
+
+        mov bx, 124
+        push ax bx si
+        call print_horizont_line
+
+        add ax, 123
+        push ax cx si
+        call print_vert_line
+
+        sub ax, 123
+        add ax, 6400
+        push ax bx si
+        call print_horizont_line
 
 @@exit:
-        ; mov ah,0
-        ; int 16h
+        pop di si dx cx bx ax bp
+        ret 4
+print_selected_item endp
+
+select_menu_item proc
+        ; direction (up 1, down -1)
+        push bp
+        mov bp, sp
+        push ax bx cx dx si di
+
+        mov dx, 0
+
+        mov ax, menu_select_item
+        
+        push ax dx
+        call print_selected_item
+
+        mov ax, menu_select_item
+        add ax, menu_lines_length
+        add ax, [bp + 4]
+@@cmp_lp:
+        cmp ax, menu_lines_length
+        jl @@norm
+
+        sub ax, menu_lines_length
+        jmp @@cmp_lp
+
+@@norm:
+        mov menu_select_item, ax
+        mov dx, 68h
+        push ax dx
+        call print_selected_item
+
+@@exit:
+        pop di si dx cx bx ax bp
+        ret 2
+select_menu_item endp
+
+cls proc 
+        push ax cx di es
+        mov ax,0A000h
+        mov es,ax
+
+        xor ax, ax ; up
+        mov cx, 64000
+        mov di, ax
+
+        rep stosb
+        pop es di cx ax
+        ret 
+cls endp
+
+menu proc
+        push ax bx cx dx si di
+
+@@reset_menu:
+        call cls
+        xor si, si ; lines_count
+        xor cx, cx ; tall
+
+@@print_lines_lp:
+
+        mov ah, 02h
+        xor bx, bx
+        mov dx, 030ch
+        add dh, cl
+        int 10h
+
+        shl si, 1
+        mov di, menu_lines[si]
+        mov dx, di
+        shr si, 1
+        mov ah, 09h
+        int 21h
+
+        inc si
+        add cx, 3
+        cmp si, menu_lines_length
+        jl @@print_lines_lp 
+
+        mov dx, 68h
+        xor ax, ax
+        push ax dx
+        call print_selected_item
+
+@@lp:
+        hlt
+
+        mov ax, 1
+        mov si, head
+        cmp si, tail
+        je @@lp
+
+        cli 
+        xor dx, dx
+        mov dl, keyboard_buffer[si]
+        inc si
+        and si, 0fh
+        mov head, si
+        sti
+
+        cmp dx, 48h ; up
+        jne @@next1
+
+        mov cx, -1
+        push cx
+        call select_menu_item
+
+@@next1:
+
+        cmp dx, 50h ; down
+        jne @@next2
+
+        mov cx, 1
+        push cx
+        call select_menu_item
+
+@@next2:
+
+        cmp dx, 1ch ; enter
+        jne @@next3
+
+        mov ax, menu_lines_length
+        dec ax
+        cmp menu_select_item, ax
+        je @@exit
+
+        cmp menu_select_item, 0
+        jne @@lp
+
+        call cls
+
+        call start_new_game
+        jmp @@reset_menu
+
+@@next3:
+        ; cmp dx, 01h
+        ; je @@exit
+
+        jmp @@lp
+
+@@exit:
+        pop di si dx cx bx ax
+        ret
+menu endp
+
+menu_select_item dw 0
+menu_lines_length dw 2
+menu_lines dw start_new_game_str, quit_str
+start_new_game_str db "Start new game", 0dh, 0ah, '$'
+quit_str db "Quit", 0dh, 0ah, '$'
+
+@start:
+        call change_video_mode
+        call change_time_interrupt
+        call change_keyboard_interrupt
+
+        call menu
+
+@@exit:
         call return_keyboard_interrupt
         call return_time_interrupt
         call return_video_mode
@@ -1327,6 +1780,10 @@ current_figure_index dw 0
 current_figure_position_x dw 0
 current_figure_position_y dw 0
 current_figure_color dw 0
+scores dw 0
+next_figure_index dw 0
+next_figure_color dw 1
+
 
 figures dw figure_I, figure_J, figure_L, figure_O, figure_S, figure_T, figure_Z
 
